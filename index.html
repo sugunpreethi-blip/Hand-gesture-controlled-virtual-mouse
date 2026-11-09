@@ -1,0 +1,387 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hand Gesture Virtual Mouse</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: Arial, sans-serif;
+}
+
+body {
+    background: #101827;
+    color: white;
+    text-align: center;
+}
+
+header {
+    padding: 25px;
+    background: #17243a;
+}
+
+header h1 {
+    color: #42d9ff;
+    margin-bottom: 10px;
+}
+
+.container {
+    width: 90%;
+    max-width: 1100px;
+    margin: 30px auto;
+}
+
+.camera-box {
+    position: relative;
+    width: 100%;
+    max-width: 700px;
+    margin: auto;
+    background: #000;
+    border: 3px solid #42d9ff;
+    border-radius: 15px;
+    overflow: hidden;
+}
+
+video {
+    display: none;
+}
+
+canvas {
+    width: 100%;
+    display: block;
+    transform: scaleX(-1);
+}
+
+.buttons {
+    margin: 20px;
+}
+
+button {
+    padding: 12px 25px;
+    margin: 8px;
+    border: none;
+    border-radius: 8px;
+    background: #42d9ff;
+    color: #101827;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+button:hover {
+    background: white;
+}
+
+#status {
+    margin: 15px;
+    color: #42d9ff;
+    font-size: 18px;
+}
+
+.instructions {
+    background: #17243a;
+    padding: 20px;
+    margin: 25px auto;
+    border-radius: 12px;
+    text-align: left;
+    max-width: 700px;
+    line-height: 2;
+}
+
+.instructions h2 {
+    color: #42d9ff;
+    margin-bottom: 10px;
+}
+
+.demo {
+    margin: 25px auto;
+    padding: 25px;
+    background: #17243a;
+    border-radius: 12px;
+    max-width: 700px;
+}
+
+.demo button {
+    margin: 10px;
+}
+
+#virtualCursor {
+    position: fixed;
+    width: 22px;
+    height: 22px;
+    background: #ff4141;
+    border: 3px solid white;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 9999;
+    display: none;
+    transform: translate(-50%, -50%);
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>Hand Gesture Controlled Virtual Mouse</h1>
+    <p>Control your mouse using hand gestures and webcam</p>
+</header>
+
+<div class="container">
+
+    <h2>Live Hand Detection</h2>
+
+    <div class="camera-box">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="buttons">
+        <button onclick="startCamera()">Start Camera</button>
+        <button onclick="stopCamera()">Stop Camera</button>
+    </div>
+
+    <h3 id="status">Camera is stopped</h3>
+
+    <div class="instructions">
+        <h2>Gesture Instructions</h2>
+        <p>☝ Index Finger: Move virtual mouse</p>
+        <p>🤏 Thumb + Index Finger: Left Click</p>
+        <p>✌ Two Fingers: Scroll the page</p>
+        <p>✊ Close your hand: Stop movement</p>
+    </div>
+
+    <div class="demo">
+        <h2>Mouse Testing Area</h2>
+        <p>Move your virtual cursor here and pinch to click.</p>
+        <button onclick="alert('Virtual mouse click successful!')">
+            Test Click
+        </button>
+        <button onclick="document.getElementById('status').innerText='Button clicked successfully!'">
+            Test Button
+        </button>
+    </div>
+
+</div>
+
+<div id="virtualCursor"></div>
+
+<script>
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const cursor = document.getElementById("virtualCursor");
+const statusText = document.getElementById("status");
+
+let camera = null;
+let running = false;
+let previousPinch = false;
+let previousScrollY = null;
+let lastClick = 0;
+
+function distance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function onResults(results) {
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.drawImage(
+        results.image,
+        0, 0,
+        canvas.width,
+        canvas.height
+    );
+
+    if (results.multiHandLandmarks &&
+        results.multiHandLandmarks.length > 0) {
+
+        const landmarks = results.multiHandLandmarks[0];
+
+        drawConnectors(
+            ctx,
+            landmarks,
+            HAND_CONNECTIONS,
+            {color: "#00FFFF", lineWidth: 4}
+        );
+
+        drawLandmarks(
+            ctx,
+            landmarks,
+            {color: "#FF0000", lineWidth: 2}
+        );
+
+        // Index fingertip
+        const index = landmarks[8];
+
+        // Thumb tip
+        const thumb = landmarks[4];
+
+        // Middle fingertip
+        const middle = landmarks[12];
+
+        // Map fingertip coordinates to screen
+        const screenX = (1 - index.x) * window.innerWidth;
+        const screenY = index.y * window.innerHeight;
+
+        cursor.style.display = "block";
+        cursor.style.left = screenX + "px";
+        cursor.style.top = screenY + "px";
+
+        // Detect pinch gesture
+        const pinchDistance = distance(index, thumb);
+        const isPinching = pinchDistance < 0.045;
+
+        if (isPinching && !previousPinch &&
+            Date.now() - lastClick > 500) {
+
+            const target = document.elementFromPoint(
+                screenX,
+                screenY
+            );
+
+            if (target && target.closest("button")) {
+                target.closest("button").click();
+            }
+
+            lastClick = Date.now();
+            statusText.innerText = "Left Click Detected";
+        }
+
+        previousPinch = isPinching;
+
+        // Detect two-finger gesture
+        const indexUp = landmarks[8].y < landmarks[6].y;
+        const middleUp = landmarks[12].y < landmarks[10].y;
+
+        if (indexUp && middleUp && !isPinching) {
+
+            if (previousScrollY !== null) {
+
+                const movement = middle.y - previousScrollY;
+
+                if (Math.abs(movement) > 0.008) {
+                    window.scrollBy(
+                        0,
+                        movement * 1000
+                    );
+                }
+            }
+
+            previousScrollY = middle.y;
+            statusText.innerText = "Scrolling Gesture Detected";
+
+        } else {
+            previousScrollY = null;
+
+            if (!isPinching) {
+                statusText.innerText = "Hand Detected - Mouse Active";
+            }
+        }
+
+    } else {
+        cursor.style.display = "none";
+        previousPinch = false;
+        previousScrollY = null;
+        statusText.innerText = "No Hand Detected";
+    }
+
+    ctx.restore();
+}
+
+const hands = new Hands({
+    locateFile: (file) => {
+        return "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file;
+    }
+});
+
+hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+});
+
+hands.onResults(onResults);
+
+async function startCamera() {
+
+    if (running) return;
+
+    try {
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: 640,
+                height: 480
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+
+        await video.play();
+
+        camera = new Camera(video, {
+            onFrame: async () => {
+                if (running) {
+                    await hands.send({image: video});
+                }
+            },
+            width: 640,
+            height: 480
+        });
+
+        running = true;
+        camera.start();
+
+        statusText.innerText = "Camera Started - Show Your Hand";
+
+    } catch (error) {
+
+        statusText.innerText =
+            "Camera Error: " + error.message;
+
+    }
+}
+
+function stopCamera() {
+
+    running = false;
+
+    if (camera) {
+        camera.stop();
+        camera = null;
+    }
+
+    if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+    }
+
+    cursor.style.display = "none";
+    previousPinch = false;
+    previousScrollY = null;
+
+    statusText.innerText = "Camera Stopped";
+}
+
+</script>
+
+</body>
+</html>
